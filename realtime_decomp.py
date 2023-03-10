@@ -134,10 +134,7 @@ def peak_extraction(s, l=31):
     return s2, peak_indices
 
 
-def dist_ratio(s2_i, peak_indices_signal):
-    # Signal cluster and Noise cluster
-    signal_cluster = s2_i[peak_indices_signal]
-    noise_cluster = np.delete(s2_i, peak_indices_signal)
+def dist_ratio(s2_i, signal_cluster, noise_cluster):
 
     # Centroids
     signal_centroid = signal_cluster.mean()
@@ -148,12 +145,22 @@ def dist_ratio(s2_i, peak_indices_signal):
     dist_noise = abs(signal_cluster - noise_centroid)
 
     # Calculating ratio of distances
-    peak_dist_ratio = dist_signal / dist_noise
+    peak_dist_ratio = dist_signal / (dist_noise + dist_signal)
+
+    """
+    # Calculating distance of each signal peak to signal centroid and noise centroid
+    dist_signal = abs(signal_cluster - signal_centroid).sum()
+    dist_noise = abs(signal_cluster - noise_centroid).sum()
+    diff = abs(dist_signal - dist_noise)
+
+    # Calculating ratio of distances
+    peak_dist_ratio = diff / max(dist_signal, dist_noise)
+    """
 
     return peak_dist_ratio
 
 
-def spike_classification(s2, peak_indices, random_seed=None, thd=0.9, thd_dist_ratio=0.2, sil_dist=False):
+def spike_classification(s2, peak_indices, use_kmeans=True, random_seed=None, thd_sil=0.9, thd_dist_ratio=0.2, classify=True, sil_dist=False):
     """
     Returns a matrix of motor unit pulses.
 
@@ -162,56 +169,116 @@ def spike_classification(s2, peak_indices, random_seed=None, thd=0.9, thd_dist_r
             Matrix containing squared source vectors
         peak_indices    : numpy.ndarray
             Matrix containing indices of detected peaks from s2
+        use_kmeans      : bool
+            Separates large peaks from small peaks using kmeans clustering if True
         random_seed     : int
             Used to initialize the pseudo-random processes in the function
-        thd             : float
+        thd_sil         : float
             Threshold of the silhouette score
-        
+        thd_dist_ratio  : float
+            Threshold of the peak distance ratio
+        sil_dist        : bool
+            Classifies peaks as motor unit pulses according to the silhouette score (if True) 
+            or peak distance ratio (if False) 
+    
     Returns:
         MUPulses        : numpy.ndarray
             Matrix containing indices of motor unit pulses
     """
-    MUPulses = []
     
+    MUPulses = []
+    centroid_dists = []
+    signal_clusters = []
+    noise_clusters = []
+    n_signal = []
+    n_noise = []
+    peak_indices_signal = []
+    peak_indices_noise = []
+
     for i in range(s2.shape[0]):
-        # Separating large peaks from relatively small peaks (noise)
-        kmeans = KMeans(n_clusters=2, random_state=None)
-        kmeans.fit(s2[i][peak_indices[i]].reshape(-1,1))
+        if use_kmeans:
+            # Separating large peaks from relatively small peaks (noise)
+            kmeans = KMeans(n_clusters=2, random_state=random_seed)
+            kmeans.fit(s2[i][peak_indices[i]].reshape(-1,1))
 
-        # Signal cluster centroid (sc_i)
-        sc_i = np.argmax(kmeans.cluster_centers_)
-        # Determining which cluster contains large peaks (signal)
-        signal_indices = kmeans.labels_.astype(bool) # if sc_i == 1
-        if sc_i == 0:
-            signal_indices = ~signal_indices
-        # Indices of the peaks in signal cluster
-        peak_indices_signal = peak_indices[i][signal_indices]
-        
-
-        if sil_dist:
-            # Silhouette score
-            sil = silhouette_score(s2[i], peak_indices_signal)
-            if sil > thd:
-                MUPulses.append(peak_indices_signal.astype(int))
-            else:
-                MUPulses.append(np.array([], dtype="int64"))
+            # Signal cluster centroid (sc_i)
+            sc_i = np.argmax(kmeans.cluster_centers_)
+            # Determining which cluster contains large peaks (signal)
+            signal_indices = kmeans.labels_.astype(bool) # if sc_i == 1
+            if sc_i == 0:
+                signal_indices = ~signal_indices      
         else:
-            # Distances between each detected peak and 
-            #     signal cluster centroid (sc) & noise cluster centroid (nc), 
-            # to classify whether the detected peak is a motor unit discharge or noise
-            sig_dist_ratio = dist_ratio(s2[i], peak_indices_signal)
-            if (sig_dist_ratio < thd_dist_ratio).any():
-                MUPulses.append(peak_indices_signal[sig_dist_ratio < thd_dist_ratio].astype(int))
+            # all peaks = signal
+            signal_indices = np.ones(peak_indices[i].shape, dtype="bool")
+            
+        n_signal_idx = signal_indices.sum()
+        n_noise_idx = (~signal_indices).sum()
+        
+        # Indices of the peaks in signal cluster
+        peak_indices_signal_i = peak_indices[i][signal_indices]
+        peak_indices_signal_i = peak_indices[i][signal_indices]
+        peak_indices_signal.append(peak_indices_signal_i)
+        peak_indices_noise.append(peak_indices[i][~signal_indices])
+
+        # Signal cluster and Noise cluster
+        signal_cluster = s2[i][peak_indices_signal_i]
+        noise_cluster = np.delete(s2[i], peak_indices_signal_i)
+
+        # Centroids
+        signal_centroid = signal_cluster.mean()
+        noise_centroid = noise_cluster.mean()
+        
+        # Distance between centroids
+        centroid_dist = signal_centroid - noise_centroid 
+        
+        if classify:
+            if sil_dist:
+                # Silhouette score
+                sil = silhouette_score(s2[i], peak_indices_signal_i)
+                if sil > thd_sil:
+                    MUPulses.append(peak_indices_signal_i.astype(int))
+                else:
+                    MUPulses.append(np.array([], dtype="int64"))
             else:
-                MUPulses.append(np.array([], dtype="int64"))
+                # Distances between each detected peak and 
+                #     signal cluster centroid (sc) & noise cluster centroid (nc), 
+                # to classify whether the detected peak is a motor unit discharge or noise
+                sig_dist_ratio = dist_ratio(s2[i], signal_cluster, noise_cluster)
+                if (sig_dist_ratio > thd_dist_ratio).any():
+                    MUPulses.append(peak_indices_signal_i[sig_dist_ratio > thd_dist_ratio].astype(int))
+                    # MUPulses.append(peak_indices_signal.astype(int))
+                else:
+                    MUPulses.append(np.array([], dtype="int64"))
+        else:
+            MUPulses.append(peak_indices_signal_i.astype(int))
+        
+        signal_clusters.append(signal_cluster)
+        noise_clusters.append(noise_cluster)
+        n_signal.append(n_signal_idx)
+        n_noise.append(n_noise_idx)
+        centroid_dists.append(centroid_dist)
+
+    n_signal = np.array(n_signal, dtype="int")
+    n_noise = np.array(n_noise, dtype="int")
+    peak_indices_signal = np.array(peak_indices_signal, dtype="object")
+    peak_indices_noise = np.array(peak_indices_noise, dtype="object")
+    signal_clusters = np.array(signal_clusters, dtype="object")
+    noise_clusters = np.array(noise_clusters, dtype="object")
 
     MUPulses = np.array(MUPulses, dtype="object")
+    centroid_dists = np.array(centroid_dists, dtype="float")
+    signal = {"n_signal": n_signal, 
+            "peak_indices_signal": peak_indices_signal, 
+            "signal_clusters": signal_clusters}
+    noise = {"n_noise": n_noise, 
+            "peak_indices_noise": peak_indices_noise, 
+            "noise_clusters": noise_clusters}
 
-    return MUPulses
+    return MUPulses, centroid_dists, signal, noise
 
 
 
-def plot_extracted_peaks(s2, peak_indices, fs=2048, title="extracted_peaks"):
+def plot_extracted_peaks(s2, peak_indices, fs=2048, title="extracted peaks"):
     # Creating subplot
     n_rows = s2.shape[0]
     height_ratio = np.ones(n_rows)
@@ -229,9 +296,7 @@ def plot_extracted_peaks(s2, peak_indices, fs=2048, title="extracted_peaks"):
             ax[i].scatter(peak_indices[i]/fs, s2[i][peak_indices[i]], c='r', s=40)
     plt.show()
 
-
-
-def plot_classified_spikes(s2, MUPulses, fs=2048, title="classified_spikes"):
+def plot_classified_spikes(s2, MUPulses, fs=2048, title="classified spikes"):
     # Creating subplot
     n_rows = s2.shape[0]
     height_ratio = np.ones(n_rows)
@@ -247,4 +312,66 @@ def plot_classified_spikes(s2, MUPulses, fs=2048, title="classified_spikes"):
         ax[i].set_ylabel(f"MU {i}", fontsize=20)
         if len(MUPulses[i]) != 0:
             ax[i].scatter(MUPulses[i]/fs, s2[i][MUPulses[i]], c='g', s=40)
+    plt.show()
+
+
+def plot_peaks(s2, noise, signal, centroid_dists, fs=2048, title="extracted peaks"):
+    font_large = 30
+    font_medium = 20
+    font_small = 16
+    
+    # Creating subplot
+    n_rows = s2.shape[0]
+    height_ratio = np.ones(n_rows)
+    plt.rcParams['figure.figsize'] = [35, 8*(n_rows)]
+    fig, ax = plt.subplots(n_rows, 1, gridspec_kw={'height_ratios': height_ratio})
+    t_axis = np.arange(0, s2.shape[1], dtype="float") / float(fs)
+
+    # Plotting s2 and detected peaks
+    ax[0].set_title(title, fontsize=font_large)
+    for i in range(s2.shape[0]):
+        ax[i].plot(t_axis, s2[i], label=r"$s^2$")
+        ax[i].set_ylabel(f"MU {i}", fontsize=font_medium)
+        if noise["peak_indices_noise"][i].size != 0:
+            ax[i].scatter(noise["peak_indices_noise"][i]/fs, s2[i][noise["peak_indices_noise"][i]], c='r', s=40, label="noise")
+        ax[i].scatter(signal["peak_indices_signal"][i]/fs, s2[i][signal["peak_indices_signal"][i]], c='g', s=40, label="signal")
+        ax[i].scatter(signal["peak_indices_signal"][i][signal["signal_clusters"][i].argmax()]/fs, signal["signal_clusters"][i].max(), c='c', s=80)
+        ax[i].xaxis.set_tick_params(labelsize=font_small)
+        ax[i].yaxis.set_tick_params(labelsize=font_small)
+        ax[i].text(.02,.95, f"centroid_dist={centroid_dists[i]:.4f}", fontsize=font_medium, transform=ax[i].transAxes)
+        legend = ax[i].legend(loc='upper right', shadow=False, fontsize=font_medium)
+    plt.show()
+
+
+def plot_peaks_pulses(s2, noise, signal, centroid_dists, MUPulses, fs=2048, title="extracted peaks"):
+    font_large = 30
+    font_medium = 20
+    font_small = 16
+    
+    # Creating subplot
+    n_rows = s2.shape[0] * 2
+    height_ratio = np.ones(n_rows)
+    plt.rcParams['figure.figsize'] = [35, 8*(n_rows)]
+    fig, ax = plt.subplots(n_rows, 1, gridspec_kw={'height_ratios': height_ratio})
+    t_axis = np.arange(0, s2.shape[1], dtype="float") / float(fs)
+
+    # Plotting s2 and detected peaks
+    ax[0].set_title(title, fontsize=font_large)
+    for i in range(s2.shape[0]):
+        ax[2*i].plot(t_axis, s2[i], label=r"$s^2$")
+        ax[2*i].set_ylabel(f"MU {i}", fontsize=font_medium)
+        if noise["peak_indices_noise"][i].size != 0:
+            ax[2*i].scatter(noise["peak_indices_noise"][i]/fs, s2[i][noise["peak_indices_noise"][i]], c='r', s=40, label="noise")
+        ax[2*i].scatter(signal["peak_indices_signal"][i]/fs, s2[i][signal["peak_indices_signal"][i]], c='g', s=40, label="signal")
+        ax[2*i].scatter(signal["peak_indices_signal"][i][signal["signal_clusters"][i].argmax()]/fs, signal["signal_clusters"][i].max(), c='c', s=80)
+        ax[2*i].xaxis.set_tick_params(labelsize=font_small)
+        ax[2*i].yaxis.set_tick_params(labelsize=font_small)
+        ax[2*i].text(.02,.95, f"centroid_dist={centroid_dists[i]:.4f}", fontsize=font_medium, transform=ax[2*i].transAxes)
+        legend0 = ax[2*i].legend(loc='upper right', shadow=False, fontsize=font_medium)
+
+        ax[2*i+1].plot(t_axis, s2[i])
+        ax[2*i+1].set_ylabel(f"MU {i}", fontsize=20)
+        ax[2*i+1].scatter(MUPulses[i]/fs, s2[i][MUPulses[i]], c='g', s=40, label="MUPulses")
+        legend1 = ax[2*i+1].legend(loc='upper right', shadow=False, fontsize=font_medium)
+    
     plt.show()
