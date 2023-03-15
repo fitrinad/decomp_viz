@@ -216,9 +216,9 @@ def spike_classification(s2, peak_indices, use_kmeans=True, random_seed=None, th
         
         # Indices of the peaks in signal cluster
         peak_indices_signal_i = peak_indices[i][signal_indices]
-        peak_indices_signal_i = peak_indices[i][signal_indices]
+        peak_indices_noise_i = peak_indices[i][~signal_indices]
         peak_indices_signal.append(peak_indices_signal_i)
-        peak_indices_noise.append(peak_indices[i][~signal_indices])
+        peak_indices_noise.append(peak_indices_noise_i)
 
         # Signal cluster and Noise cluster
         signal_cluster = s2[i][peak_indices_signal_i]
@@ -296,7 +296,13 @@ def plot_extracted_peaks(s2, peak_indices, fs=2048, title="extracted peaks"):
             ax[i].scatter(peak_indices[i]/fs, s2[i][peak_indices[i]], c='r', s=40)
     plt.show()
 
-def plot_classified_spikes(s2, MUPulses, fs=2048, title="classified spikes"):
+
+def plot_classified_spikes(s2, peak_indices, MUPulses, fs=2048, 
+                           title="classified spikes", label1="detected peaks", label2="MUPulses"):
+    font_large = 24
+    font_medium = 20
+    font_small = 16
+    
     # Creating subplot
     n_rows = s2.shape[0]
     height_ratio = np.ones(n_rows)
@@ -305,13 +311,16 @@ def plot_classified_spikes(s2, MUPulses, fs=2048, title="classified spikes"):
     time = np.arange(0, s2.shape[1], dtype="float") / float(fs)
     
     # Plotting s2 and detected peaks
-    ax[0].set_title(title, fontsize=40)
+    ax[0].set_title(title, fontsize=font_large)
     for i in range(s2.shape[0]):
-        y = s2[i]
-        ax[i].plot(time, y)
-        ax[i].set_ylabel(f"MU {i}", fontsize=20)
+        ax[i].plot(time, s2[i])
+        ax[i].set_ylabel(f"MU {i}", fontsize=font_medium)
+        if len(peak_indices[i]) != 0:
+            ax[i].scatter(peak_indices[i]/fs, s2[i][peak_indices[i]], c='g', s=40, label=label1)
         if len(MUPulses[i]) != 0:
-            ax[i].scatter(MUPulses[i]/fs, s2[i][MUPulses[i]], c='g', s=40)
+            ax[i].scatter(MUPulses[i]/fs, s2[i][MUPulses[i]], c='r', s=40, label=label2)
+        if i == 0:
+            ax[i].legend(loc='upper right', shadow=False, fontsize=font_medium)
     plt.show()
 
 
@@ -339,7 +348,7 @@ def plot_peaks(s2, noise, signal, centroid_dists, fs=2048, title="extracted peak
         ax[i].xaxis.set_tick_params(labelsize=font_small)
         ax[i].yaxis.set_tick_params(labelsize=font_small)
         ax[i].text(.02,.95, f"centroid_dist={centroid_dists[i]:.4f}", fontsize=font_medium, transform=ax[i].transAxes)
-        legend = ax[i].legend(loc='upper right', shadow=False, fontsize=font_medium)
+        ax[i].legend(loc='upper right', shadow=False, fontsize=font_medium)
     plt.show()
 
 
@@ -367,11 +376,10 @@ def plot_peaks_pulses(s2, noise, signal, centroid_dists, MUPulses, fs=2048, titl
         ax[2*i].xaxis.set_tick_params(labelsize=font_small)
         ax[2*i].yaxis.set_tick_params(labelsize=font_small)
         ax[2*i].text(.02,.95, f"centroid_dist={centroid_dists[i]:.4f}", fontsize=font_medium, transform=ax[2*i].transAxes)
-        legend0 = ax[2*i].legend(loc='upper right', shadow=False, fontsize=font_medium)
+        ax[2*i].legend(loc='upper right', shadow=False, fontsize=font_medium)
 
         ax[2*i+1].plot(t_axis, s2[i])
         ax[2*i+1].set_ylabel(f"MU {i}", fontsize=20)
         ax[2*i+1].scatter(MUPulses[i]/fs, s2[i][MUPulses[i]], c='g', s=40, label="MUPulses")
-        legend1 = ax[2*i+1].legend(loc='upper right', shadow=False, fontsize=font_medium)
-    
+        ax[2*i+1].legend(loc='upper right', shadow=False, fontsize=font_medium)
     plt.show()

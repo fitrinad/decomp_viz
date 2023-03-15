@@ -126,12 +126,16 @@ def acquire_remove_ind(data,
     
     envelope_data = env_data(data, fs, order, l_bpf, h_bpf, lpf_cut)
     
+    font_large = 16
+    font_medium = 12
+    font_small = 10
+    
     # Plotting results
     x = np.arange(0, len(envelope_data))
     time = x / fs
     plt.rcParams['figure.figsize'] = [15,5]
-    plt.rc('xtick', labelsize=10)
-    plt.rc('ytick', labelsize=10)
+    plt.rc('xtick', labelsize=font_small)
+    plt.rc('ytick', labelsize=font_small)
     plt.plot(time, envelope_data)
     
     # Finding plateau and start/end of ramp (grad ~ 0)
@@ -228,8 +232,8 @@ def crop_data(data, start=0.0, end=40.0, fs=2048):
             sampling frequency (Hz)
             
     Returns:
-        data_mod    : numpy.ndarray
-            (13, 5) array containing modified EMG data
+        data_crop    : numpy.ndarray
+            (13, 5) array containing EMG data in the specified window
         
     Example:
         gl_10_crop = crop_data(gl_10, end=70)
@@ -244,6 +248,48 @@ def crop_data(data, start=0.0, end=40.0, fs=2048):
     return data_crop
     
 
+def crop_ind_pt(ind_pt, data, start=0.0, end=40.0, fs=2048):
+    """
+    Returns the cropped pt and data between start and end (in seconds).
+    
+    Args:
+    	ind_pt  	: numpy.ndarray
+            indices of motor units' pulse trains
+        start       : float
+            starting time (in seconds) of the cropped data
+        end         : float
+            end time (in seconds) of the cropped data
+        fs          : int
+            sampling frequency (Hz)
+            
+    Returns:
+        ind_pt_crop : numpy.ndarray
+            indices of motor units' pulse trains in the specified window
+        data_crop   : numpy.ndarray
+            (13, 5) array containing EMG data in the specified window
+        
+    Example:
+        ind_pt_gl10_crop, gl_10_crop = crop_pt(gl_10, end=20.0)
+    """
+    data_crop = crop_data(data, start=start, end=end, fs=fs)
+    n_mu = ind_pt.shape[0]
+    x = data_crop[0][1].shape[1]
+
+    start_idx = int(start * fs)
+    end_idx = start_idx + x
+    
+    ind_pt_crop = []
+    for i in range(n_mu):
+        tmp = np.where( np.logical_and( ind_pt[i] > start_idx, ind_pt[i] < end_idx ) )
+        if tmp[0].size == 0:
+            ind_pt_crop.append(np.array([], dtype="int64"))
+        else:
+            ind_pt_crop.append(ind_pt[i][tmp].astype(int) - start_idx)
+    
+    ind_pt_crop = np.array(ind_pt_crop, dtype="object")
+
+    return ind_pt_crop, data_crop
+
 
     
 def visualize_pt(ind_pt, data, fs=2048, title="decomposition"):
@@ -254,26 +300,27 @@ def visualize_pt(ind_pt, data, fs=2048, title="decomposition"):
     	ind_pt  : numpy.ndarray
             indices of motor units' pulse trains
         data	: numpy.ndarray
-            1D array containing EMG data to be processed
+            (13, 5) array containing 64 channels of EMG data
         fs		: float
             sampling frequency (Hz)
     
     Example:
         visualize_pt(decomp_gl_10_mod, gl_10_mod)
     """
-
+    font_large = 24
+    font_medium = 20
+    font_small = 16
+    
     n_mu = ind_pt.shape[0]
     x = data[0][1].shape[1]
     
     # Pulse train
     pt = np.zeros((n_mu, x), dtype="int64")
-    for i in range(ind_pt.shape[0]):
-        for j in range(ind_pt[i].shape[0]):
-            tmp = ind_pt[i][j]
-            pt[i][tmp] = 1
+    for i in range(n_mu):
+        pt[i][ind_pt[i]] = 1
     
     # Creating subplot
-    n_rows = ind_pt.shape[0] + 1
+    n_rows = n_mu + 1
     height_ratio = np.ones(n_rows)
     height_ratio[0] = 5
     plt.rcParams['figure.figsize'] = [35, 10+(2.5*(n_rows-1))]
@@ -283,16 +330,15 @@ def visualize_pt(ind_pt, data, fs=2048, title="decomposition"):
     envelope_data = env_data(data[0][1][0])
     x = np.arange(0, len(envelope_data), dtype="float")
     time = x / float(fs)
-    plt.rc('xtick', labelsize=20)
-    plt.rc('ytick', labelsize=20)
+    plt.rc('xtick', labelsize=font_medium)
+    plt.rc('ytick', labelsize=font_medium)
     # plt.rcParams['figure.figsize'] = [35,10]
     ax[0].plot(time, envelope_data)
-    ax[0].set_title(title, fontsize=24)
+    ax[0].set_title(title, fontsize=font_large)
 
     for i in range(1, n_rows):
-        y = pt[i-1]
-        ax[i].plot(time,y)
-        ax[i].set_ylabel(f"MU {i-1}", fontsize=20)
+        ax[i].plot(time,pt[i-1])
+        ax[i].set_ylabel(f"MU {i-1}", fontsize=font_medium)
     plt.show()
 
 
@@ -304,7 +350,7 @@ def visualize_pt_window(ind_pt, data, start=0.0, end=40.0, fs=2048, title="decom
     	ind_pt  : numpy.ndarray
             indices of motor units' pulse trains
         data	: numpy.ndarray
-            1D array containing EMG data to be processed
+            (13, 5) array containing 64 channels of EMG data
         start       : float
             starting time (in seconds) of the window
         end         : float
@@ -313,9 +359,12 @@ def visualize_pt_window(ind_pt, data, start=0.0, end=40.0, fs=2048, title="decom
             sampling frequency (Hz)
     
     Example:
-        visualize_pt(decomp_gl_10_mod, gl_10_mod)
+        visualize_pt_window(decomp_gl_10_mod, gl_10_mod)
     """
-
+    font_large = 24
+    font_medium = 20
+    font_small = 16
+    
     # Windowed data
     data_crop = crop_data(data, start = start, end = end)
     n_mu = ind_pt.shape[0]
@@ -323,11 +372,10 @@ def visualize_pt_window(ind_pt, data, start=0.0, end=40.0, fs=2048, title="decom
     
     # Pulse train in the range of the window
     pt = np.zeros((n_mu, x), dtype="int64")
-    for i in range(ind_pt.shape[0]):
+    for i in range(n_mu):
         for j in range(ind_pt[i].shape[0]):
             if ind_pt[i][j] < x:
-                tmp = ind_pt[i][j]
-                pt[i][tmp] = 1
+                pt[i][ind_pt[i][j]] = 1
     
     # Creating subplot
     n_rows = ind_pt.shape[0] + 1
@@ -340,19 +388,59 @@ def visualize_pt_window(ind_pt, data, start=0.0, end=40.0, fs=2048, title="decom
     envelope_data = env_data(data_crop[0][1][0])
     x = np.arange(0, len(envelope_data), dtype="float")
     time = x / float(fs)
-    plt.rc('xtick', labelsize=20)
-    plt.rc('ytick', labelsize=20)
-    # plt.rcParams['figure.figsize'] = [35,10]
+    plt.rc('xtick', labelsize=font_medium)
+    plt.rc('ytick', labelsize=font_medium)
     ax[0].plot(time, envelope_data)
-    ax[0].set_title(title, fontsize=24)
+    ax[0].set_title(title, fontsize=font_large)
     
     # Plotting pulse trains
     for i in range(1, n_rows):
         y = pt[i-1]
         ax[i].plot(time,y)
-        ax[i].set_ylabel(f"MU {i-1}", fontsize=20)
+        ax[i].set_ylabel(f"MU {i-1}", fontsize=font_medium)
     plt.show()
-   
+
+
+def compare_pt(ind_pt1, ind_pt2, data, fs=2048, title="decomposition", label1="offline", label2="realtime"):
+    font_large = 24
+    font_medium = 20
+    font_small = 16
+    
+    n_mu = ind_pt1.shape[0]
+    x = data[0][1].shape[1]
+    
+    # Pulse trains
+    pt1 = np.zeros((n_mu, x), dtype="int64")
+    pt2 = np.zeros((n_mu, x), dtype="int64")
+    for i in range(n_mu):
+        pt1[i][ind_pt1[i]] = 1
+        pt2[i][ind_pt2[i]] = 1
+    
+    # Creating subplot
+    n_rows = n_mu + 1
+    height_ratio = np.ones(n_rows)
+    height_ratio[0] = 5
+    plt.rcParams['figure.figsize'] = [35, 10+(2.5*(n_rows-1))]
+    fig, ax = plt.subplots(n_rows , 1, gridspec_kw={'height_ratios': height_ratio})
+    
+    # Plotting envelope of emg_data
+    envelope_data = env_data(data[0][1][0])
+    x = np.arange(0, len(envelope_data), dtype="float")
+    time = x / float(fs)
+    plt.rc('xtick', labelsize=font_medium)
+    plt.rc('ytick', labelsize=font_medium)
+    # plt.rcParams['figure.figsize'] = [35,10]
+    ax[0].plot(time, envelope_data)
+    ax[0].set_title(title, fontsize=font_large)
+
+    for i in range(1, n_rows):
+        ax[i].plot(time, pt1[i-1], color="tab:blue", label=label1)
+        ax[i].plot(time, pt2[i-1], color="tab:orange", label=label2)
+        ax[i].set_ylabel(f"MU {i-1}", fontsize=font_medium)
+        if i == 1:
+            ax[i].legend(loc='upper right', shadow=False, fontsize=font_medium)
+    plt.show()
+
     
 def cross_corr(muap_dict_1, muap_dict_2):
     """
@@ -476,6 +564,9 @@ def plot_meancc(mean_cc_values, y_axis="decomposition_1", x_axis="decomposition_
     Example:
         plot_meancc(mean_cc_gl10_gl10_mod)
     """
+    font_large = 16
+    font_medium = 12
+    font_small = 10
     
     # make plot
     fig, ax = plt.subplots()
@@ -489,9 +580,9 @@ def plot_meancc(mean_cc_values, y_axis="decomposition_1", x_axis="decomposition_
     bar = plt.colorbar(shw, fraction=0.046, pad=0.04)
 
     # show plot with labels
-    plt.xlabel(x_axis, fontsize=12)
-    plt.ylabel(y_axis, fontsize=12)
-    bar.set_label('Mean cross-correlation', fontsize=12)
-    plt.rc('xtick', labelsize=10)
-    plt.rc('ytick', labelsize=10)
+    plt.xlabel(x_axis, fontsize=font_medium)
+    plt.ylabel(y_axis, fontsize=font_medium)
+    bar.set_label('Mean cross-correlation', fontsize=font_medium)
+    plt.rc('xtick', labelsize=font_small)
+    plt.rc('ytick', labelsize=font_small)
     plt.show()
