@@ -1,9 +1,53 @@
 from scipy.signal import butter, lfilter
 import numpy as np
+from emgdecompy.preprocessing import flatten_signal
 import matplotlib.pyplot as plt
 import copy
 
-def env_data(data, 
+
+def calc_snr(data, noise_start=0.0, noise_end=3.0, fs=2048):
+    if (data[0][0].size == 0 and data.ndim == 2) or data.ndim == 3:
+        data = flatten_signal(data)
+    x = data.shape[1]
+    n_ch = data.shape[0]
+    snr = np.zeros(n_ch, dtype="float")
+    
+    for i in range(n_ch):
+        noise = data[i][int(noise_start*fs):int(noise_end*fs)]
+        snr[i] = np.square(data[i]).mean() / np.square(noise).mean()
+    return snr  
+
+
+def plot_signal(data, fs=2048, title="EMG signal"):
+    font_large = 24
+    font_medium = 20
+    font_small = 16
+    
+    if (data[0][0].size == 0 and data.ndim == 2) or data.ndim == 3:
+        data = flatten_signal(data)
+    x = data.shape[1]
+    n_ch = data.shape[0]
+    
+    # Creating subplot
+    n_rows = n_ch
+    height_ratio = np.ones(n_rows)
+    plt.rcParams['figure.figsize'] = [35, 2.5*n_rows]
+    fig, ax = plt.subplots(n_rows , 1, gridspec_kw={'height_ratios': height_ratio})
+    
+    # Plotting data
+    x_axis = np.arange(0, x, dtype="float")
+    time_axis = x_axis / float(fs)
+    plt.rc('xtick', labelsize=font_medium)
+    plt.rc('ytick', labelsize=font_medium)
+    ax[0].set_title(title, fontsize=font_large)
+
+    for i in range(0, n_rows):
+        ax[i].plot(time_axis, data[i])
+        ax[i].set_ylabel(f"Ch {i}", fontsize=font_medium)
+    plt.show()
+
+
+def env_data(data,
                fs=2048, 
                order=4, 
                l_bpf=40, 
@@ -15,7 +59,7 @@ def env_data(data,
     
     Args:
     	data	        : numpy.ndarray
-            1D array containing EMG data to be processed
+            Array containing EMG data to be processed
         fs		        : float
             sampling frequency (Hz)
         order	        : int
@@ -29,22 +73,34 @@ def env_data(data,
     
     Returns:
         envelope_data   : numpy.ndarray
-            1D array containing rectified envelope of the EMG data
+            1D array containing rectified envelope of the EMG data, averaged
     
     Example:
-        env_gl_10 = env_data(gl_10_flatten[0])
+        env_gl_10 = env_data(gl_10)
     """
+    if (data[0][0].size == 0 and data.ndim == 2) or data.ndim == 3:
+        x = data[0][1].shape[1]
+        n_ch = flatten_signal(data).shape[0]
+        data_flt = flatten_signal(data)
+    else:
+        x = data.shape[1]
+        n_ch = data.shape[0]
+        data_flt = data
     
-    # Bandpass filter
-    b0, a0 = butter(order, [l_bpf, h_bpf], fs=fs, btype="band")
-    bpfiltered_data = lfilter(b0, a0, data)
-    # Rectifying signal
-    rectified_data = abs(bpfiltered_data)
-    # Lowpass filter
-    b1, a1 = butter(order, lpf_cut, fs=fs, btype="low")
-    envelope_data = lfilter(b1, a1, rectified_data)
+    envelope_data = np.zeros((n_ch, x), dtype="float")    
     
-    return envelope_data
+    for i in range(n_ch):
+        # Bandpass filter
+        b0, a0 = butter(order, [l_bpf, h_bpf], fs=fs, btype="band")
+        bpfiltered_data = lfilter(b0, a0, data_flt[i])
+        # Rectifying signal
+        rectified_data = abs(bpfiltered_data)
+        # Lowpass filter
+        b1, a1 = butter(order, lpf_cut, fs=fs, btype="low")
+        envelope_data[i] = lfilter(b1, a1, rectified_data)
+    envelope_data_avg = envelope_data.mean(axis=0)
+
+    return envelope_data_avg
 
 
 
@@ -59,7 +115,7 @@ def plot_env_data(data,
     
     Args:
     	data	: numpy.ndarray
-            1D array containing EMG data to be processed
+            Array containing EMG data to be processed
         fs		: float
             sampling frequency (Hz)
         order	: int
@@ -75,7 +131,12 @@ def plot_env_data(data,
         plot_lpf_signal(gl_10_flatten[0])
     """
     
-    envelope_data = env_data(data, fs, order, l_bpf, h_bpf, lpf_cut)
+    envelope_data = env_data(data=data, 
+                             fs=fs, 
+                             order=order, 
+                             l_bpf=l_bpf, 
+                             h_bpf=h_bpf, 
+                             lpf_cut=lpf_cut)
     
     # Plotting results
     x = np.arange(0, len(envelope_data))
@@ -100,7 +161,7 @@ def acquire_remove_ind(data,
     
     Args:
     	data	: numpy.ndarray
-            1D array containing EMG data to be processed
+            Array containing EMG data to be processed
         fs		: float
             sampling frequency (Hz)
         order	: int
@@ -124,7 +185,12 @@ def acquire_remove_ind(data,
         acquire_remove_ind(gl_10_flatten[0])
     """
     
-    envelope_data = env_data(data, fs, order, l_bpf, h_bpf, lpf_cut)
+    envelope_data = env_data(data=data, 
+                             fs=fs, 
+                             order=order, 
+                             l_bpf=l_bpf, 
+                             h_bpf=h_bpf, 
+                             lpf_cut=lpf_cut)
     
     font_large = 16
     font_medium = 12
@@ -238,14 +304,20 @@ def crop_data(data, start=0.0, end=40.0, fs=2048):
     Example:
         gl_10_crop = crop_data(gl_10, end=70)
     """
-    if end > (len(data[0][1][0]) / fs):
-        end = len(data[0][1][0]) / fs
+    if (data[0][0].size == 0 and data.ndim == 2) or data.ndim == 3:
+        x = data[0][1].shape[1]
+    else:
+        x = data.shape[1]
+    
+    if end > (x / fs):
+        end = x / fs
     data_crop = copy.deepcopy(data)
     for i in range(0, data_crop.shape[0]):
         for j in range(0, data_crop.shape[1]):
             if len(data_crop[i][j]) != 0:
                 data_crop[i][j] = np.asarray([data[i][j][0][int(start*fs): int(end*fs)]])
     return data_crop
+
     
 
 def crop_ind_pt(ind_pt, data, start=0.0, end=40.0, fs=2048):
@@ -273,7 +345,10 @@ def crop_ind_pt(ind_pt, data, start=0.0, end=40.0, fs=2048):
     """
     data_crop = crop_data(data, start=start, end=end, fs=fs)
     n_mu = ind_pt.shape[0]
-    x = data_crop[0][1].shape[1]
+    if (data_crop[0][0].size == 0 and data_crop.ndim == 2) or data_crop.ndim == 3:
+        x = data_crop[0][1].shape[1]
+    else:
+        x = data_crop.shape[1]
 
     start_idx = int(start * fs)
     end_idx = start_idx + x
@@ -282,12 +357,13 @@ def crop_ind_pt(ind_pt, data, start=0.0, end=40.0, fs=2048):
     for i in range(n_mu):
         tmp = np.where( np.logical_and( ind_pt[i] > start_idx, ind_pt[i] < end_idx ) )
         if tmp[0].size == 0:
-            ind_pt_crop.append(np.array([], dtype="int64"))
+            add_ind = []
         else:
-            ind_pt_crop.append(ind_pt[i][tmp].astype(int) - start_idx)
+            add_ind = ind_pt[i][tmp] - start_idx
+        ind_pt_crop.append(np.array(add_ind, dtype="int64"))
     
     ind_pt_crop = np.array(ind_pt_crop, dtype="object")
-
+    
     return ind_pt_crop, data_crop
 
 
@@ -312,7 +388,12 @@ def visualize_pt(ind_pt, data, fs=2048, title="decomposition"):
     font_small = 16
     
     n_mu = ind_pt.shape[0]
-    x = data[0][1].shape[1]
+    if (data[0][0].size == 0 and data.ndim == 2) or data.ndim == 3:
+        x = data[0][1].shape[1]
+        n_ch = flatten_signal(data).shape[0]
+    else:
+        x = data.shape[1]
+        n_ch = data.shape[0]
     
     # Pulse train
     pt = np.zeros((n_mu, x), dtype="int64")
@@ -327,12 +408,11 @@ def visualize_pt(ind_pt, data, fs=2048, title="decomposition"):
     fig, ax = plt.subplots(n_rows , 1, gridspec_kw={'height_ratios': height_ratio})
     
     # Plotting envelope of emg_data
-    envelope_data = env_data(data[0][1][0])
+    envelope_data = env_data(data)
     x = np.arange(0, len(envelope_data), dtype="float")
     time = x / float(fs)
     plt.rc('xtick', labelsize=font_medium)
     plt.rc('ytick', labelsize=font_medium)
-    # plt.rcParams['figure.figsize'] = [35,10]
     ax[0].plot(time, envelope_data)
     ax[0].set_title(title, fontsize=font_large)
 
@@ -368,8 +448,14 @@ def visualize_pt_window(ind_pt, data, start=0.0, end=40.0, fs=2048, title="decom
     # Windowed data
     data_crop = crop_data(data, start = start, end = end)
     n_mu = ind_pt.shape[0]
-    x = data_crop[0][1].shape[1]
-    
+    if data_crop[0][0].size == 0 or data_crop.ndim == 3:
+        x = data_crop[0][1].shape[1]
+        n_ch = flatten_signal(data_crop).shape[0]
+    else:
+        x = data_crop.shape[1]
+        n_ch = data_crop.shape[0]
+
+
     # Pulse train in the range of the window
     pt = np.zeros((n_mu, x), dtype="int64")
     for i in range(n_mu):
@@ -385,7 +471,7 @@ def visualize_pt_window(ind_pt, data, start=0.0, end=40.0, fs=2048, title="decom
     fig, ax = plt.subplots(n_rows , 1, gridspec_kw={'height_ratios': height_ratio})
     
     # Plotting envelope of cropped emg data
-    envelope_data = env_data(data_crop[0][1][0])
+    envelope_data = env_data(data_crop)
     x = np.arange(0, len(envelope_data), dtype="float")
     time = x / float(fs)
     plt.rc('xtick', labelsize=font_medium)
@@ -407,14 +493,19 @@ def compare_pt(ind_pt1, ind_pt2, data, fs=2048, title="decomposition", label1="o
     font_small = 16
     
     n_mu = ind_pt1.shape[0]
-    x = data[0][1].shape[1]
+    if (data[0][0].size == 0 and data.ndim == 2) or data.ndim == 3:
+        x = data[0][1].shape[1]
+    else:
+        x = data.shape[1]
     
     # Pulse trains
     pt1 = np.zeros((n_mu, x), dtype="int64")
     pt2 = np.zeros((n_mu, x), dtype="int64")
     for i in range(n_mu):
-        pt1[i][ind_pt1[i]] = 1
-        pt2[i][ind_pt2[i]] = 1
+        if ind_pt1[i].size != 0:
+            pt1[i][ind_pt1[i]] = 1
+        if ind_pt2[i].size != 0:
+            pt2[i][ind_pt2[i]] = 1
     
     # Creating subplot
     n_rows = n_mu + 1
@@ -424,12 +515,11 @@ def compare_pt(ind_pt1, ind_pt2, data, fs=2048, title="decomposition", label1="o
     fig, ax = plt.subplots(n_rows , 1, gridspec_kw={'height_ratios': height_ratio})
     
     # Plotting envelope of emg_data
-    envelope_data = env_data(data[0][1][0])
+    envelope_data = env_data(data)
     x = np.arange(0, len(envelope_data), dtype="float")
     time = x / float(fs)
     plt.rc('xtick', labelsize=font_medium)
     plt.rc('ytick', labelsize=font_medium)
-    # plt.rcParams['figure.figsize'] = [35,10]
     ax[0].plot(time, envelope_data)
     ax[0].set_title(title, fontsize=font_large)
 
@@ -441,7 +531,39 @@ def compare_pt(ind_pt1, ind_pt2, data, fs=2048, title="decomposition", label1="o
             ax[i].legend(loc='upper right', shadow=False, fontsize=font_medium)
     plt.show()
 
+
+
+def calc_roa(ind_pt1, ind_pt2, data, decomp="realtime_decomp"):
+    n_mu = ind_pt1.shape[0]
+    if (data[0][0].size == 0 and data.ndim == 2) or data.ndim == 3:
+        x = data[0][1].shape[1]
+    else:
+        x = data.shape[1]
     
+    roa = np.zeros((n_mu), dtype="float")
+    # Pulse trains
+    pt1 = np.zeros((n_mu, x), dtype="int64")
+    pt2 = np.zeros((n_mu, x), dtype="int64")
+    for i in range(n_mu):
+        if ind_pt1[i].size != 0:
+            pt1[i][ind_pt1[i]] = 1
+        if ind_pt2[i].size != 0:
+            pt2[i][ind_pt2[i]] = 1
+        # Number of discharges of the i-th motor unit identified by both decompositions
+        c_i = np.dot(pt1[i], pt2[i])
+        # Number of discharges of the i-th motor unit identified by ind_pt1
+        a_i = pt1[i].sum() - c_i
+        # Number of discharges of the i-th motor unit identified by ind_pt2
+        b_i = pt2[i].sum() - c_i
+        roa[i] = (c_i * 100) / (c_i + a_i + b_i)
+    print(f"RoA between offline decomposition and {decomp} (%):")
+    for i in range(n_mu):
+        print(f"Motor unit {i}: {roa[i]}")
+    print(f"mean: {roa.mean()}")
+    return roa
+    
+
+
 def cross_corr(muap_dict_1, muap_dict_2):
     """
     Calculates the cross correlation between MUAPs of 2 decompositions, 
@@ -586,3 +708,232 @@ def plot_meancc(mean_cc_values, y_axis="decomposition_1", x_axis="decomposition_
     plt.rc('xtick', labelsize=font_small)
     plt.rc('ytick', labelsize=font_small)
     plt.show()
+
+
+
+def hist_isi(ind_pt, fs=2048, title="ISI histogram"):
+    font_large = 24
+    font_medium = 20
+    font_small = 16
+    
+    n_mu = ind_pt.shape[0]
+    isi = []
+    
+    # Inter-spike interval for each MU
+    for i in range(n_mu):
+        isi.append(np.diff(ind_pt[i])*1000/fs)
+    isi = np.array(isi, dtype="object")
+
+    # Creating subplot
+    n_rows = n_mu
+    height_ratio = np.ones(n_rows)
+    plt.rcParams['figure.figsize'] = [15, 2*n_rows]
+    fig, ax = plt.subplots(n_rows, 1, gridspec_kw={'height_ratios': height_ratio})
+    ax[0].set_title(title, fontsize=font_large)
+    
+    for i in range(n_rows):
+        ax[i].hist(isi[i], 100)
+        ax[i].set_ylabel(f"MU {i}", fontsize=font_medium)
+        ax[i].set_xlabel("interspike interval (ms)", fontsize=font_small)
+        ax[i].tick_params(axis='both', which='major', labelsize=font_small)
+    plt.show()
+
+
+
+def plot_firing_rate(ind_pt, data, time_bin=.4, filt=True, filt_size=.2, fs=2048, title="Firing rate"):
+    font_large = 24
+    font_medium = 20
+    font_small = 16
+    
+    n_mu = ind_pt.shape[0]
+    isi = []
+    n_bin = int(time_bin * fs)
+    
+    if (data[0][0].size == 0 and data.ndim == 2) or data.ndim == 3:
+        x = data[0][1].shape[1]
+    else:
+        x = data.shape[1]
+    
+    # Firing rate for each MU 
+    firing_rates = np.zeros((n_mu, x), dtype="float")
+    filtered = np.zeros((n_mu, x), dtype="float")
+    
+    for mu in range(n_mu):
+        # Pulse train
+        pt_i = np.zeros(x, dtype="int64")
+        if ind_pt[mu].size != 0:
+            pt_i[ind_pt[mu]] = 1
+        # Spikes every n_bin
+        for i in range(int(n_bin/2), int(x-(n_bin/2))):
+            spikeCount = pt_i[i-int(n_bin/2) : i+int(n_bin/2)].sum()
+            firing_rates[mu][i] = fs * spikeCount/n_bin
+
+        if filt:    
+            # filtered firing rate
+            windowSize = fs * filt_size
+            window = np.hanning(windowSize)
+            window = window / window.sum()
+            filtered[mu] = np.convolve(window, firing_rates[mu], mode='same')
+        else:
+            filtered[mu] = firing_rates[mu]
+
+    # Creating subplot
+    n_rows = n_mu
+    height_ratio = np.ones(n_rows)
+    plt.rcParams['figure.figsize'] = [15, 2.5*n_rows]
+    fig, ax = plt.subplots(n_rows, 1, gridspec_kw={'height_ratios': height_ratio})
+    ax[0].set_title(title, fontsize=font_large)
+    
+    time_axis = np.arange(x, dtype="float")/fs
+    for i in range(n_rows):
+        ax[i].plot(time_axis, filtered[i])
+        ax[i].set_ylabel(f"MU {i}", fontsize=font_medium)
+        ax[i].tick_params(axis='both', which='major', labelsize=font_small)
+    plt.show()
+
+
+
+def compare_firing_rate(ind_pt1, ind_pt2, data, 
+                        time_bin=.4, filt=True, filt_size=.2, fs=2048,
+                        title="Firing rate", label1="realtime", label2="offline"):
+    font_large = 24
+    font_medium = 20
+    font_small = 16
+    
+    n_mu = ind_pt1.shape[0]
+    isi1 = []
+    isi2 = []
+    n_bin = int(time_bin * fs)
+    
+    if (data[0][0].size == 0 and data.ndim == 2) or data.ndim == 3:
+        x = data[0][1].shape[1]
+    else:
+        x = data.shape[1]
+    
+    # Firing rate for each MU 
+    firing_rates_1 = np.zeros((n_mu, x), dtype="float")
+    firing_rates_2 = np.zeros((n_mu, x), dtype="float")
+    filtered_1 = np.zeros((n_mu, x), dtype="float")
+    filtered_2 = np.zeros((n_mu, x), dtype="float")
+    
+    for mu in range(n_mu):
+        # Pulse train
+        pt1_i = np.zeros(x, dtype="int64")
+        pt2_i = np.zeros(x, dtype="int64")
+        if ind_pt1[mu].size != 0:
+            pt1_i[ind_pt1[mu]] = 1
+        if ind_pt2[mu].size != 0:
+            pt2_i[ind_pt2[mu]] = 1
+        # Spikes every n_bin
+        for i in range(int(n_bin/2), int(x-(n_bin/2))):
+            spikeCount1 = pt1_i[i-int(n_bin/2) : i+int(n_bin/2)].sum()
+            firing_rates_1[mu][i] = fs * spikeCount1/n_bin
+            spikeCount2 = pt2_i[i-int(n_bin/2) : i+int(n_bin/2)].sum()
+            firing_rates_2[mu][i] = fs * spikeCount2/n_bin
+
+        if filt:    
+            # filtered firing rate
+            windowSize = fs * filt_size
+            window = np.hanning(windowSize)
+            window = window / window.sum()
+            filtered_1[mu] = np.convolve(window, firing_rates_1[mu], mode='same')
+            filtered_2[mu] = np.convolve(window, firing_rates_2[mu], mode='same')
+        else:
+            filtered_1[mu] = firing_rates_1[mu]
+            filtered_2[mu] = firing_rates_2[mu]
+
+    # Creating subplot
+    n_rows = n_mu
+    height_ratio = np.ones(n_rows)
+    plt.rcParams['figure.figsize'] = [15, 2.5*n_rows]
+    fig, ax = plt.subplots(n_rows, 1, gridspec_kw={'height_ratios': height_ratio})
+    ax[0].set_title(title, fontsize=font_large)
+    
+    time_axis = np.arange(x, dtype="float")/fs
+    for i in range(n_rows):
+        ax[i].plot(time_axis, filtered_1[i], color="tab:blue", label=label1)
+        ax[i].plot(time_axis, filtered_2[i], color="tab:orange", label=label2)
+        ax[i].set_ylabel(f"MU {i}", fontsize=font_medium)
+        ax[i].tick_params(axis='both', which='major', labelsize=font_small)
+        if i==0:
+            ax[i].legend(loc='upper right', shadow=False, fontsize=font_medium)
+    plt.show()
+
+
+
+def muap_dict_mod(raw, ind_pt, l=31):
+    # ind_pt, raw = crop_ind_pt(decomp_gl_10["MUPulses"], gl_10, start=10.0, end=50.0)
+    # muap_dict_mod(raw, ind_pt)
+    if (raw[0][0].size == 0 and raw.ndim == 2) or raw.ndim == 3:
+        raw = flatten_signal(raw)
+    channels = raw.shape[0]
+    shape_dict = {}
+
+    for i in range(ind_pt.shape[0]):
+        ind_pt[i] = ind_pt[i].squeeze()
+
+        # Create array to contain indices of peak shapes
+        ptl = np.zeros((ind_pt[i].shape[0], l * 2 + 1), dtype="int")
+
+        for j in range(ind_pt[i].size):
+            if ind_pt[i].size == 1:
+                k = ind_pt[i]
+            else:
+                k = ind_pt[i][j]
+            ptl[j] = np.arange(k - l, k + l + 1)
+
+            # This is to ensure that if early peak happens before half of AP discharge time.
+            # that there is no negative indices
+            if k < l:
+                ptl[j] = np.arange(k - l, k + l + 1)
+                neg_idx = abs(k - l)
+                ptl[j][:neg_idx] = np.repeat(0, neg_idx)
+
+        ptl = ptl.flatten()
+
+        # Create channel index of each peak
+        channel_index = np.repeat(np.arange(channels), l * 2 + 1)
+
+        # Get sample number of each position along each peak
+        sample = np.arange(l * 2 + 1)
+        sample = np.tile(sample, channels)
+
+        # Get average signals from each channel
+        signal = (
+            raw[:, ptl]
+            .reshape(channels, ptl.shape[0] // (l * 2 + 1), l * 2 + 1)
+            .mean(axis=1)
+            .flatten()
+        )
+
+        shape_dict[f"mu_{i}"] = {
+            "sample": sample,
+            "signal": signal,
+            "channel": channel_index,
+        }
+"""
+data = gl_10
+ind_pt = decomp_gl_10["MUPulses"]
+
+muap_data = muap_dict(data, ind_pt)
+
+n_mu = ind_pt.shape[0]
+if (data[0][0].size == 0 and data.ndim == 2) or data.ndim == 3:
+    data = flatten_signal(data)
+    n_ch = data.shape[0]
+    x = data.shape[1]
+else:
+    n_ch = data.shape[0]
+    n_ch = data.shape[1]
+muap_len = l*2 + 1
+
+muap_shapes = np.zeros((n_mu, n_ch, muap_len), dtype="float")
+
+firing_rates = np.zeros((n_mu, n_ch, x), dtype="float")
+for i in range(n_mu):    
+    for channel in range(n_ch):
+        muap_shape = muap_data[f"mu_{i}"]["signal"][channel*muap_len : (channel+1)*muap_len]
+        firing_rates[i][channel] = np.convolve(muap_shape, data[channel], "same")
+
+mean_firing_rates = np.mean(firing_rates, axis=1, dtype="float")
+"""
