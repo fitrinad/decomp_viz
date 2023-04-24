@@ -12,9 +12,16 @@ import matplotlib.pyplot as plt
 from functions import *
 
 
+#############################################################################################################################
+### Training module  ########################################################################################################
+#############################################################################################################################
+"""
+Decomposition functions for the training module from:
+https://github.com/The-Motor-Unit/EMGdecomPy/tree/main/src/emgdecompy
+"""
 def silhouette_score_tmod(s_i, peak_indices):
     """
-    Siilhouette score function from: 
+    Silhouette score function from: 
     https://github.com/The-Motor-Unit/EMGdecomPy/tree/main/src/emgdecompy
     Calculates silhouette score on the estimated source.
 
@@ -318,7 +325,7 @@ def decomposition_tmod(
     x = flatten_signal(x)
     
     # Discard unwanted channels
-    if discard != None:
+    if discard is not None:
         x = np.delete(x, discard, axis=0)
 
     # Apply band-pass filter
@@ -359,6 +366,7 @@ def decomposition_tmod(
     pnrs = []
     peak_centroids = []
     noise_centroids = []
+    s = []
 
 
     for i in range(M):
@@ -392,6 +400,7 @@ def decomposition_tmod(
             pnrs.append(pnr_score)
             peak_centroids.append(peak_centroid)
             noise_centroids.append(noise_centroid)
+            s.append(s_i)
 
         # Update initialization matrix for next iteration
         z_peaks = np.delete(z_peaks, z_highest_peak, axis=1)
@@ -403,6 +412,7 @@ def decomposition_tmod(
     decomp_results["PNR"] = np.array(pnrs)
     decomp_results["peak_centroids"] = np.array(peak_centroids)
     decomp_results["noise_centroids"] = np.array(noise_centroids)
+    decomp_results["s"] = np.array(s)
 
     return decomp_results
 
@@ -411,7 +421,7 @@ def calc_centroids(B, x, random_seed=None, discard=None, R=16, l=31):
     if (x[0][0].size == 0 and x.ndim == 2) or x.ndim == 3:
         x = flatten_signal(x)
     # Discard unwanted channels
-    if discard != None:
+    if discard is not None:
         x = np.delete(x, discard, axis=0)
 
     x = center_matrix(x)
@@ -482,11 +492,12 @@ def sep_realtime(x, B, discard=None, center=True,
             Separation matrix for realtime decomposition
     """
     # Flatten signal
-    if x[0][0].size == 0 or x.ndim == 3:
+    if ((x[0][0].size == 0 or 
+         x[12][0].size == 0) and x.ndim == 2) or x.ndim == 3:
         x = flatten_signal(x)
     
     # Discarding channels
-    if discard != None:
+    if discard is not None:
         x = np.delete(x, discard, axis=0)
 
     # band-pass filter
@@ -538,11 +549,14 @@ def sep_realtime(x, B, discard=None, center=True,
 
 
 
+#############################################################################################################################
+### Decomposition module  ###################################################################################################
+#############################################################################################################################
 def source_extraction(x, B_realtime, mean_tm=None, discard=None, 
                       bandpass=True, lowcut=10, highcut=900, fs=2048, order=6, 
                       R=16):
     """
-    Returns matrix containing source vector extracted from the EMG signal (x).
+    Returns matrix containing source vectors estimation from the EMG signal (x).
 
     Args:
         x           : numpy.ndarray
@@ -565,7 +579,7 @@ def source_extraction(x, B_realtime, mean_tm=None, discard=None,
     x = flatten_signal(x)
 
     # Discarding channels
-    if discard != None:
+    if discard is not None:
         x = np.delete(x, discard, axis=0)
 
     # band-pass filter
@@ -657,6 +671,9 @@ def dist_ratio(s2_i, signal_cluster, noise_cluster):
     return peak_dist_ratio
 
 
+#############################################################################################################################
+### kmeans_sil_cp  ##########################################################################################################
+#############################################################################################################################
 def sort_peaks(s2, peak_indices, use_kmeans=True, random_seed=None, thd_noise=0.38):
     signal_clusters = []
     signal_centroids = []
@@ -774,7 +791,7 @@ def spike_classification(s2, peak_indices,
             Matrix containing indices of motor unit pulses
     """
     
-    signal, noise, centroid_dists, s2, max_sc = sort_peaks(s2=s2, peak_indices=peak_indices, 
+    signal, noise, centroid_dists, s2, _ = sort_peaks(s2=s2, peak_indices=peak_indices, 
                                                            use_kmeans=use_kmeans, random_seed=random_seed, 
                                                            thd_noise=thd_noise)
 
@@ -785,23 +802,28 @@ def spike_classification(s2, peak_indices,
     for i in range(s2.shape[0]):
         add_peaks = peak_indices_signal[i]
         if classify_mu: # whether MU i is firing or not, based on SIL or centroid distance
-            add_peaks = []
+            add_peaks = peak_indices_signal[i]
             if sil_dist:
                 # Silhouette score
                 sil = silhouette_score(s2[i], peak_indices_signal[i])
                 sil_scores.append(sil)
-                if sil > thd_sil:
-                    add_peaks = peak_indices_signal[i]
+                if sil < thd_sil:
+                    add_peaks = []
             else:
                 cent_dist = centroid_dists[i] 
                 cent_dists.append(cent_dist)
-                if cent_dist > thd_cent_dist:
-                    add_peaks = peak_indices_signal[i]
+                if cent_dist < thd_cent_dist:
+                    add_peaks = []
 
         # Comparing distance of each peak to signal centroid (sc_tm) and noise centroid (nc_tm), 
         # adding peaks closer to signal centroid
         if (sc_tm is not None) and (nc_tm is not None) and (len(add_peaks) != 0):
-            add_indices = abs(add_peaks - (nc_tm[i]/max_sc)) > abs(add_peaks - (sc_tm[i]/max_sc))
+            # s2_max = s2[i][add_peaks].max()
+            # add_indices = ( abs(s2[i][add_peaks]/s2_max - nc_tm[i]) > 
+            #                abs(s2[i][add_peaks]/s2_max - sc_tm[i]) )
+            # add_peaks = add_peaks[add_indices] 
+            add_indices = ( abs(s2[i][add_peaks] - (nc_tm[i]/sc_tm.max())) > 
+                            abs(s2[i][add_peaks] - (sc_tm[i]/sc_tm.max())) )
             add_peaks = add_peaks[add_indices] 
         
         MUPulses.append(np.array(add_peaks, dtype="int64"))
@@ -818,13 +840,358 @@ def spike_classification(s2, peak_indices,
     return MUPulses, cls_values, signal, noise, s2
 
 
+def batch_sil(sil_scores_prev, sil_scores, overlap=1.0, fs=2048):
+    n_mu = sil_scores_prev.shape[0]
+    end_1 = sil_scores_prev.shape[1]
+    end_2 = sil_scores.shape[1]
+    ol = int(overlap * fs)
+    curr_size = end_1 + end_2 - ol
+    if end_2 < ol:
+        curr_size = end_1
+    sil_scores_curr = np.zeros((n_mu, curr_size), dtype="float")
+    
+    sil_scores_curr[:, :end_1] = sil_scores_prev
+    if end_2 <= ol:
+        sil_scores_curr[:, end_1-end_2:curr_size] = sil_scores_prev[:, end_1-end_2:end_1]
+    else:
+        sil_scores_curr[:, end_1:curr_size] = sil_scores[:, ol:end_2]
+        """if ol!=0:
+            for i in range(n_mu):
+                tmp = np.arange(sil_scores_prev[i][end_1-1-ol],
+                                sil_scores[i][ol],
+                                (sil_scores[i][ol]-sil_scores_prev[i][end_1-1-ol])/ol)
+                sil_scores_curr[i, end_1-ol:end_1] = tmp"""
+    return sil_scores_curr
 
-def batch_decomp(data, B_realtime, mean_tm=None, discard=None, 
+
+def batch_decomp(data, B_realtime, mean_tm=None, discard=None, l=31,
                  use_kmeans=False, thd_noise=0.38,
                  classify_mu=True, sil_dist = True,
                  thd_sil=0.9, thd_cent_dist=0.6,
                  sc_tm=None, nc_tm=None,
+                 batch_size=4.0, overlap=0.0, fs=2048):
+    if ((data[0][0].size == 0 or
+         data[12][0].size == 0) and data.ndim == 2) or data.ndim == 3:
+        end_time = data[0][1].shape[1] / fs
+    else:
+        end_time = data.shape[1] / fs
+
+    time = 0.0
+    while True:
+        raw = crop_data(data, start = time, end = time+batch_size)
+
+        # Source extraction
+        s, _ = source_extraction(x = raw, 
+                                 B_realtime = B_realtime, 
+                                 mean_tm = mean_tm,
+                                 discard=discard)
+
+        # Peak extraction
+        s2, peak_indices = peak_extraction(s=s, l=l)
+        
+        # Spike classification
+        if time == 0.0:
+            MUPulses, cls_values, _, _, _ = spike_classification(s2=s2, 
+                                                        peak_indices=peak_indices, 
+                                                        use_kmeans=use_kmeans, 
+                                                        thd_noise=thd_noise,
+                                                        classify_mu=classify_mu, 
+                                                        sil_dist = sil_dist, 
+                                                        thd_sil=thd_sil, 
+                                                        thd_cent_dist=thd_cent_dist,
+                                                        sc_tm=sc_tm, nc_tm=nc_tm)
+            sil_scores = np.tile(cls_values["sil_scores"], (s2.shape[1], 1)).T
+            time += batch_size-overlap
+        else:
+            tmp = []
+            MUPulses_curr, cls_values_curr, _, _, _ = spike_classification(s2=s2, 
+                                                             peak_indices=peak_indices, 
+                                                             use_kmeans=use_kmeans, 
+                                                             thd_noise=thd_noise,
+                                                             classify_mu=classify_mu, 
+                                                             sil_dist = sil_dist, 
+                                                             thd_sil=thd_sil, 
+                                                             thd_cent_dist=thd_cent_dist,
+                                                             sc_tm=sc_tm, nc_tm=nc_tm)
+            MUPulses_curr = MUPulses_curr + int(time*fs)
+
+            sil_scores_curr = np.tile(cls_values_curr["sil_scores"], (s2.shape[1], 1)).T
+            sil_scores_curr = batch_sil(sil_scores, 
+                                        sil_scores_curr, 
+                                        overlap=overlap, 
+                                        fs=fs)
+            sil_scores = sil_scores_curr
+            
+            for j in range(MUPulses.shape[0]):
+                add_MUPulses = MUPulses_curr[j][MUPulses_curr[j] >= (time+overlap)*fs]
+                tmp.append( np.array( np.append(MUPulses[j], add_MUPulses), dtype="int64" ) )
+                
+            tmp = np.array(tmp, dtype="object")
+            MUPulses_curr = tmp
+            MUPulses = MUPulses_curr    
+            time += batch_size-overlap
+
+        if time >= end_time:
+            break
+
+    decomp = {"MUPulses": MUPulses, "sil_scores": sil_scores}
+    return decomp
+
+
+def batch_decomp_window(data, B_realtime, mean_tm=None, discard=None, l=31,
+                 use_kmeans=False, thd_noise=0.38,
+                 classify_mu=True, sil_dist = True,
+                 thd_sil=0.9, thd_cent_dist=0.6,
+                 thd_pps=5,
+                 sc_tm=None, nc_tm=None,
                  batch_size=0.6, overlap=0.3, fs=2048):
+    if ((data[0][0].size == 0 or
+         data[12][0].size == 0) and data.ndim == 2) or data.ndim == 3:
+        end_time = data[0][1].shape[1] / fs
+    else:
+        end_time = data.shape[1] / fs
+    time = 0.0
+    while True:
+        raw = crop_data(data, start = time, end = time+batch_size)
+
+        # Source extraction
+        s, _ = source_extraction(x = raw, 
+                                 B_realtime = B_realtime, 
+                                 mean_tm = mean_tm,
+                                 discard=discard)
+
+        # Peak extraction
+        s2, peak_indices = peak_extraction(s=s, l=l)
+        
+        # Spike classification
+        if time == 0.0:
+            MUPulses, cls_values, _, _, _ = spike_classification(s2=s2, 
+                                                        peak_indices=peak_indices, 
+                                                        use_kmeans=use_kmeans, 
+                                                        thd_noise=thd_noise,
+                                                        classify_mu=classify_mu, 
+                                                        sil_dist = sil_dist, 
+                                                        thd_sil=thd_sil, 
+                                                        thd_cent_dist=thd_cent_dist,
+                                                        sc_tm=sc_tm, nc_tm=nc_tm)
+            sil_scores = np.tile(cls_values["sil_scores"], (s2.shape[1], 1)).T
+            thd_spikes = int(thd_pps * s2.shape[1]/fs)
+                
+            for i in range(MUPulses.shape[0]):
+                # number of spikes in current window
+                n_spikes_curr_i = MUPulses[i].shape[0]
+                if (n_spikes_curr_i < thd_spikes):
+                    MUPulses[i] = np.array([], dtype="int64")
+                
+            time += batch_size-overlap
+        else:
+            tmp = []
+            MUPulses_curr, cls_values_curr, _, _, _ = spike_classification(s2=s2, 
+                                                             peak_indices=peak_indices, 
+                                                             use_kmeans=use_kmeans, 
+                                                             thd_noise=thd_noise,
+                                                             classify_mu=classify_mu, 
+                                                             sil_dist = sil_dist, 
+                                                             thd_sil=thd_sil, 
+                                                             thd_cent_dist=thd_cent_dist,
+                                                             sc_tm=sc_tm, nc_tm=nc_tm)
+             
+            MUPulses_curr = MUPulses_curr + int(time*fs)
+
+            sil_scores_curr = np.tile(cls_values_curr["sil_scores"], (s2.shape[1], 1)).T
+            sil_scores_curr = batch_sil(sil_scores, 
+                                        sil_scores_curr, 
+                                        overlap=overlap, 
+                                        fs=fs)
+            sil_scores = sil_scores_curr
+            thd_spikes = int(thd_pps * s2.shape[1]/fs)
+
+            for i in range(MUPulses.shape[0]):
+                # number of spikes in current window
+                n_spikes_curr_i = MUPulses_curr[i].shape[0]
+                
+                if (n_spikes_curr_i >= thd_spikes):
+                    add_MUPulses = MUPulses_curr[i][MUPulses_curr[i] >= (time+overlap)*fs]
+                else:
+                    add_MUPulses = np.array([], dtype="int64")
+                MUPulses_curr_i = np.append(MUPulses[i], add_MUPulses)
+                tmp.append( np.array( MUPulses_curr_i, dtype="int64" ) ) 
+            tmp = np.array(tmp, dtype="object")
+            MUPulses_curr = tmp
+            MUPulses = MUPulses_curr    
+            time += batch_size-overlap
+
+        if time >= end_time:
+            break
+
+    decomp = {"MUPulses": MUPulses, "sil_scores": sil_scores}
+    return decomp
+
+
+#############################################################################################################################
+### kmeans_cp_sil  ##########################################################################################################
+#############################################################################################################################
+def sort_peaks2(s2, peak_indices, use_kmeans=True, random_seed=None, thd_noise=0.38):
+    signal_clusters = []
+    signal_centroids = []
+    noise_clusters = []
+    noise_centroids = []
+    n_signal = []
+    n_noise = []
+    peak_indices_signal = []
+    peak_indices_noise = []
+
+    for i in range(s2.shape[0]):
+        if use_kmeans:
+            # Separating large peaks from relatively small peaks (noise)
+            kmeans = KMeans(n_clusters=2, random_state=random_seed)
+            kmeans.fit(s2[i][peak_indices[i]].reshape(-1,1))
+
+            # Signal cluster centroid (sc_i)
+            sc_i = np.argmax(kmeans.cluster_centers_)
+            # Determining which cluster contains large peaks (signal)
+            signal_indices = kmeans.labels_.astype(bool) # if sc_i == 1
+            if sc_i == 0:
+                signal_indices = ~signal_indices      
+        else:
+            # noise: peaks < thd_noise*s2.max()
+            signal_indices = s2[i][peak_indices[i]] > thd_noise*s2[i].max()
+            # signal_indices = signal_indices.flatten()
+        n_signal_idx = signal_indices.sum()
+        n_noise_idx = (~signal_indices).sum()
+        
+        # Indices of the peaks in signal cluster
+        peak_indices_signal_i = peak_indices[i][signal_indices]
+        peak_indices_noise_i = peak_indices[i][~signal_indices]
+        peak_indices_signal.append(peak_indices_signal_i)
+        peak_indices_noise.append(peak_indices_noise_i)
+
+        # Signal cluster and Noise cluster
+        signal_cluster = s2[i][peak_indices_signal_i]
+        noise_cluster = np.delete(s2[i], peak_indices_signal_i)
+
+        # Centroids
+        signal_centroid = signal_cluster.mean()
+        noise_centroid = noise_cluster.mean()
+        
+        signal_clusters.append(signal_cluster)
+        signal_centroids.append(signal_centroid)
+        noise_clusters.append(noise_cluster)
+        noise_centroids.append(noise_centroid)
+        n_signal.append(n_signal_idx)
+        n_noise.append(n_noise_idx)
+
+    n_signal = np.array(n_signal, dtype="int")
+    n_noise = np.array(n_noise, dtype="int")
+    peak_indices_signal = np.array(peak_indices_signal, dtype="object")
+    peak_indices_noise = np.array(peak_indices_noise, dtype="object")
+    
+    signal_centroids = np.array(signal_centroids, dtype="float")
+    signal_clusters = np.array(signal_clusters, dtype="object")
+    
+    noise_clusters = np.array(noise_clusters, dtype="object")
+    noise_centroids = np.array(noise_centroids, dtype="float")
+    
+    # Distance between centroids
+    centroid_dists = signal_centroids - noise_centroids 
+
+    signal = {"n_signal": n_signal, 
+            "peak_indices_signal": peak_indices_signal, 
+            "signal_clusters": signal_clusters,
+            "signal_centroids": signal_centroids}
+    noise = {"n_noise": n_noise, 
+            "peak_indices_noise": peak_indices_noise, 
+            "noise_clusters": noise_clusters,
+            "noise_centroids": noise_centroids}
+
+    return signal, noise, centroid_dists, s2
+
+
+def spike_classification2(s2, peak_indices,
+                         use_kmeans=True, random_seed=None, thd_noise=0.38, 
+                         classify_mu=True, sil_dist=False, 
+                         thd_sil=0.9, thd_cent_dist=0.6,
+                         sc_tm=None, nc_tm=None):
+    """
+    Returns a matrix of motor unit pulses.
+
+    Args:
+        s2              : numpy.ndarray
+            Matrix containing squared source vectors
+        peak_indices    : numpy.ndarray
+            Matrix containing indices of detected peaks from s2
+        use_kmeans      : bool
+            Separates large peaks from small peaks using kmeans clustering if True
+        random_seed     : int
+            Used to initialize the pseudo-random processes in the function
+        thd_sil         : float
+            Threshold of the silhouette score
+        thd_dist_ratio  : float
+            Threshold of the peak distance ratio
+        sil_dist        : bool
+            Classifies peaks as motor unit pulses according to the silhouette score (if True) 
+            or peak distance ratio (if False) 
+    
+    Returns:
+        MUPulses        : numpy.ndarray
+            Matrix containing indices of motor unit pulses
+    """
+    signal, noise, centroid_dists, s2, _ = sort_peaks(s2=s2, peak_indices=peak_indices, 
+                                                           use_kmeans=use_kmeans, random_seed=random_seed, 
+                                                           thd_noise=thd_noise)
+
+    peak_indices_signal = signal["peak_indices_signal"]
+    MUPulses = []
+    sil_scores = []
+    cent_dists = []
+    for i in range(s2.shape[0]):
+        add_peaks = peak_indices_signal[i]
+        
+        # Comparing distance of each peak to signal centroid (sc_tm) and noise centroid (nc_tm), 
+        # adding peaks closer to signal centroid
+        if (sc_tm is not None) and (nc_tm is not None) and (len(add_peaks) != 0):
+            # s2_max = s2[i][add_peaks].max()
+            # add_indices = ( abs(s2[i][add_peaks]/s2_max - nc_tm[i]) > 
+            #                abs(s2[i][add_peaks]/s2_max - sc_tm[i]) )
+            # add_peaks = add_peaks[add_indices] 
+            add_indices = ( abs(s2[i][add_peaks] - (nc_tm[i]/sc_tm.max())) > 
+                            abs(s2[i][add_peaks] - (sc_tm[i]/sc_tm.max())) )
+            add_peaks = add_peaks[add_indices] 
+        
+        if classify_mu: # whether MU i is firing or not, based on SIL or centroid distance
+            if sil_dist:
+                # Silhouette score
+                sil = silhouette_score(s2[i], peak_indices_signal[i])
+                sil_scores.append(sil)
+                if sil < thd_sil:
+                    add_peaks = []
+            else:
+                cent_dist = centroid_dists[i] 
+                cent_dists.append(cent_dist)
+                if cent_dist < thd_cent_dist:
+                    add_peaks = []
+        
+        MUPulses.append(np.array(add_peaks, dtype="int64"))
+    
+    length = len(MUPulses[0])
+    if any(len(arr) != length for arr in MUPulses):
+        MUPulses = np.array(MUPulses, dtype="object")
+    else:
+        MUPulses = np.array(MUPulses, dtype="int64")
+        
+    cls_values = {"centroid_dists": np.array(cent_dists, dtype="float"),
+                  "sil_scores": np.array(sil_scores, dtype="float")}
+
+    return MUPulses, cls_values, signal, noise, s2
+
+
+
+def batch_decomp2(data, B_realtime, mean_tm=None, discard=None, l=31,
+                 use_kmeans=False, thd_noise=0.38,
+                 classify_mu=True, sil_dist = True,
+                 thd_sil=0.9, thd_cent_dist=0.6,
+                 sc_tm=None, nc_tm=None,
+                 batch_size=4.0, overlap=0.0, fs=2048):
     if (data[0][0].size == 0 and data.ndim == 2) or data.ndim == 3:
         end_time = data[0][1].shape[1] / fs
     else:
@@ -841,11 +1208,11 @@ def batch_decomp(data, B_realtime, mean_tm=None, discard=None,
                                  discard=discard)
 
         # Peak extraction
-        s2, peak_indices = peak_extraction(s)
+        s2, peak_indices = peak_extraction(s, l=l)
         
         # Spike classification
         if time == 0.0:
-            MUPulses, _, _, _, _ = spike_classification(s2=s2, 
+            MUPulses, _, _, _, _ = spike_classification2(s2=s2, 
                                                         peak_indices=peak_indices, 
                                                         use_kmeans=use_kmeans, 
                                                         thd_noise=thd_noise,
@@ -857,7 +1224,7 @@ def batch_decomp(data, B_realtime, mean_tm=None, discard=None,
             time += batch_size-overlap
         else:
             tmp = []
-            MUPulses_curr, _, _, _, _ = spike_classification(s2=s2, 
+            MUPulses_curr, _, _, _, _ = spike_classification2(s2=s2, 
                                                              peak_indices=peak_indices, 
                                                              use_kmeans=use_kmeans, 
                                                              thd_noise=thd_noise,
@@ -884,8 +1251,9 @@ def batch_decomp(data, B_realtime, mean_tm=None, discard=None,
     return decomp
 
 
-
-
+#############################################################################################################################
+### Plotting ################################################################################################################
+#############################################################################################################################
 def plot_extracted_peaks(s2, peak_indices, fs=2048, title="extracted peaks"):
     # Creating subplot
     n_rows = s2.shape[0]
