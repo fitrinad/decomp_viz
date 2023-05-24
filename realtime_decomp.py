@@ -822,8 +822,8 @@ def spike_classification(s2, peak_indices,
             # add_indices = ( abs(s2[i][add_peaks]/s2_max - nc_tm[i]) > 
             #                abs(s2[i][add_peaks]/s2_max - sc_tm[i]) )
             # add_peaks = add_peaks[add_indices] 
-            add_indices = ( abs(s2[i][add_peaks] - (nc_tm[i]/sc_tm.max())) > 
-                            abs(s2[i][add_peaks] - (sc_tm[i]/sc_tm.max())) )
+            add_indices = ( abs(s2[i][add_peaks] - (nc_tm[i])) > 
+                            abs(s2[i][add_peaks] - (sc_tm[i])) )
             add_peaks = add_peaks[add_indices] 
         
         MUPulses.append(np.array(add_peaks, dtype="int64"))
@@ -1010,7 +1010,7 @@ def batch_decomp_window(data, B_realtime, mean_tm=None, discard=None, l=31,
                 # number of spikes in current window
                 n_spikes_curr_i = MUPulses_curr[i].shape[0]
                 
-                if (n_spikes_curr_i >= thd_spikes):
+                if (n_spikes_curr_i >= thd_spikes) and (n_spikes_curr_i >= thd_pps):
                     add_MUPulses = MUPulses_curr[i][MUPulses_curr[i] >= (time+overlap)*fs]
                 else:
                     add_MUPulses = np.array([], dtype="int64")
@@ -1328,7 +1328,7 @@ def plot_peaks(s2, noise, signal, centroid_dists, fs=2048, title="extracted peak
     plt.show()
 
 
-def plot_peaks_pulses(s2, noise, signal, centroid_dists, MUPulses, fs=2048, title="extracted peaks"):
+def plot_peaks_pulses(s2, noise, signal, sc_tm, nc_tm, MUPulses, fs=2048, title="extracted peaks"):
     font_large = 30
     font_medium = 20
     font_small = 16
@@ -1351,7 +1351,7 @@ def plot_peaks_pulses(s2, noise, signal, centroid_dists, MUPulses, fs=2048, titl
         ax[2*i].scatter(signal["peak_indices_signal"][i][signal["signal_clusters"][i].argmax()]/fs, signal["signal_clusters"][i].max(), c='c', s=80)
         ax[2*i].xaxis.set_tick_params(labelsize=font_small)
         ax[2*i].yaxis.set_tick_params(labelsize=font_small)
-        ax[2*i].text(.02,.95, f"centroid_dist={centroid_dists[i]:.4f}", fontsize=font_medium, transform=ax[2*i].transAxes)
+        ax[2*i].text(.02,.95, f"sc={sc_tm[i]:.4f}\nnc={nc_tm[i]:.4f}", fontsize=font_medium, transform=ax[2*i].transAxes)
         ax[2*i].legend(loc='upper right', shadow=False, fontsize=font_medium)
 
         ax[2*i+1].plot(t_axis, s2[i])
@@ -1359,3 +1359,4 @@ def plot_peaks_pulses(s2, noise, signal, centroid_dists, MUPulses, fs=2048, titl
         ax[2*i+1].scatter(MUPulses[i]/fs, s2[i][MUPulses[i]], c='g', s=40, label="MUPulses")
         ax[2*i+1].legend(loc='upper right', shadow=False, fontsize=font_medium)
     plt.show()
+
